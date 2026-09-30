@@ -52,6 +52,9 @@ RUN ARCH=$(rustup show | grep "Default host" | sed -e 's/.* //') && \
 # (필요에 따라 --targets esp32,esp32s3 등으로 원하는 타깃만 한정 가능)
 RUN espup install --export-file /home/jenkins/export-esp.sh
 
+# install sccache
+RUN cargo install sccache --locked
+
 # SSH 세션 및 쉘 실행 시 ESP 환경변수 자동 로드
 RUN echo "source /home/jenkins/export-esp.sh" >> /home/jenkins/.bashrc && \
     echo "source /home/jenkins/export-esp.sh" >> /home/jenkins/.profile
