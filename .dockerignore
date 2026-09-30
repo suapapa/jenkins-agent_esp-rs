@@ -1,0 +1,7 @@
+.git
+.github
+.DS_Store
+*.md
+.env
+.env.example
+docker-compose.yml

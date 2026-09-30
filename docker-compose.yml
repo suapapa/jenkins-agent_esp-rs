@@ -1,0 +1,11 @@
+services:
+  esp-agent:
+    build: .
+    image: jenkins-agent-esp-rs:latest
+    container_name: jenkins-agent-esp-rs
+    restart: unless-stopped
+    ports:
+      - "2222:22"
+    environment:
+      # Jenkins Controller의 공개키(Public Key)를 입력합니다.
+      - JENKINS_AGENT_SSH_PUBKEY=${JENKINS_AGENT_SSH_PUBKEY}
