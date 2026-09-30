@@ -1,4 +1,4 @@
-name: Build and Push Docker Image (Native Multi-Arch)
+name: Build and Push Docker Image (GHCR Only)
 
 on:
   push:
@@ -9,10 +9,10 @@ on:
   workflow_dispatch:
 
 env:
-  # 이미지 태그: jenkins/ssh-agent_esp-rs
-  IMAGE_NAME: jenkins/ssh-agent_esp-rs
-  # GitHub Container Registry (선택 사항)
-  GHCR_IMAGE: ghcr.io/${{ github.repository_owner }}/ssh-agent_esp-rs
+  REGISTRY: ghcr.io
+  # GitHub Container Registry 이미지 이름
+  # 필요 시 ghcr.io/${{ github.repository }} 로 변경하여 저장소명과 동일하게 설정할 수도 있습니다.
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/ssh-agent_esp-rs
 
 jobs:
   # 1. QEMU 없이 아키텍처별 네이티브 러너에서 각각 빌드 (100% 하드웨어 네이티브 속도)
@@ -40,20 +40,23 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to Docker Hub
-        if: ${{ github.event_name != 'pull_request' && secrets.DOCKERHUB_TOKEN != '' }}
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME || 'jenkins' }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
+      # GitHub 내장 GITHUB_TOKEN을 사용하여 GHCR 로그인 (별도 Secret 설정 불필요)
       - name: Log in to GitHub Container Registry (GHCR)
         if: ${{ github.event_name != 'pull_request' }}
         uses: docker/login-action@v3
         with:
-          registry: ghcr.io
+          registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 아키텍처별 고유 태그 생성 (소문자 변환 자동 처리)
+      - name: Extract metadata for arch tag
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,format=long,suffix=-${{ matrix.arch }}
 
       - name: Build and push arch-specific image
         uses: docker/build-push-action@v6
@@ -62,9 +65,7 @@ jobs:
           file: ./Dockerfile
           platforms: ${{ matrix.platform }}
           push: ${{ github.event_name != 'pull_request' }}
-          tags: |
-            ${{ secrets.DOCKERHUB_TOKEN != '' && format('{0}:{1}-{2}', env.IMAGE_NAME, github.sha, matrix.arch) || '' }}
-            ${{ env.GHCR_IMAGE }}:${{ github.sha }}-${{ matrix.arch }}
+          tags: ${{ steps.meta.outputs.tags }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -80,24 +81,16 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to Docker Hub
-        if: ${{ secrets.DOCKERHUB_TOKEN != '' }}
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME || 'jenkins' }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
       - name: Log in to GitHub Container Registry (GHCR)
         uses: docker/login-action@v3
         with:
-          registry: ghcr.io
+          registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Docker Hub 메타데이터 추출 (latest, branch, semver 등)
-      - name: Extract Docker metadata
-        if: ${{ secrets.DOCKERHUB_TOKEN != '' }}
-        id: meta-docker
+      # 최종 배포용 태그 추출 (latest, branch, semver 등)
+      - name: Extract Docker metadata for final tags
+        id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE_NAME }}
@@ -108,32 +101,11 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=sha,format=short
 
-      # Docker Hub 멀티 아키텍처 매니페스트 생성 및 푸시
-      - name: Create and push Docker Hub multi-arch manifest
-        if: ${{ secrets.DOCKERHUB_TOKEN != '' }}
-        run: |
-          TAG_ARGS=$(echo '${{ steps.meta-docker.outputs.json }}' | jq -r '.tags | map("-t " + .) | join(" ")')
-          docker buildx imagetools create ${TAG_ARGS} \
-            ${{ env.IMAGE_NAME }}:${{ github.sha }}-amd64 \
-            ${{ env.IMAGE_NAME }}:${{ github.sha }}-arm64
-
-      # GHCR 메타데이터 추출
-      - name: Extract GHCR metadata
-        id: meta-ghcr
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.GHCR_IMAGE }}
-          tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=ref,event=branch
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha,format=short
-
       # GHCR 멀티 아키텍처 매니페스트 생성 및 푸시
       - name: Create and push GHCR multi-arch manifest
         run: |
-          TAG_ARGS=$(echo '${{ steps.meta-ghcr.outputs.json }}' | jq -r '.tags | map("-t " + .) | join(" ")')
+          TAG_ARGS=$(echo '${{ steps.meta.outputs.json }}' | jq -r '.tags | map("-t " + .) | join(" ")')
+          BASE_IMAGE=$(echo '${{ steps.meta.outputs.json }}' | jq -r '.tags[0]' | cut -d: -f1)
           docker buildx imagetools create ${TAG_ARGS} \
-            ${{ env.GHCR_IMAGE }}:${{ github.sha }}-amd64 \
-            ${{ env.GHCR_IMAGE }}:${{ github.sha }}-arm64
+            ${BASE_IMAGE}:sha-${{ github.sha }}-amd64 \
+            ${BASE_IMAGE}:sha-${{ github.sha }}-arm64
